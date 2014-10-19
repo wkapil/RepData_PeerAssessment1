@@ -1,91 +1,160 @@
-activityData <- read.table(unz("activity.zip", "activity.csv"), header=T, quote="\"", sep=",")
+library("data.table")
 
-# convert date to date activityData type
-activityData$date <- as.Date(activityData$date) 
-activityDataNoNA <- na.omit(activityData) 
+### Read Data and formulate
 
-# sum steps by date
-dailySteps <- rowsum(activityDataNoNA$steps, format(activityDataNoNA$date, '%Y-%m-%d')) 
-dailySteps <- activityData.frame(dailySteps) 
-names(dailySteps) <- ("steps")
-hist(dailySteps$steps, 
-     main=" ",
-     breaks=10,
-     xLable="Daily Steps")
-mean(dailySteps$steps)
-median(dailySteps$steps) 
+activityData  <- read.csv("activity.csv", header=TRUE)
+dataTable        <- data.table(activityData)
+dataTable$steps  <- as.integer(dataTable$steps)
+dataTable$day    <- as.Date(activityData$date,"%Y-%m-%d")
+
+### Step 1
+
+workingData <- dataTable[ dataTable$steps != 0
+                          ,list(
+                            sum    = sum(steps,na.rm=TRUE)
+                            , mean   = mean(steps,na.rm=TRUE) 
+                            , median = as.double( median(steps,na.rm=TRUE) )
+                          )
+                          ,by=day
+                          ]
+
+def.par <- par(no.readonly = TRUE)
+
+layout( matrix( c(1, 1, 2, 3), 2, 2, byrow = TRUE) )
+
+plot( x = workingData$day , type = "h", xlab = "Day", 
+      y = workingData$sum , ylab = "Sum Steps", 
+      main = "Number of Steps By Day")
+
+plot( x = workingData$day, type = "h", xlab = "Day", 
+      y = workingData$mean , ylab = "Mean Steps" , ylim=c(0, 300), 
+      main = "Mean Steps By Day")
+
+plot( x = workingData$day, type = "h", xlab = "Day", 
+      y = workingData$median , ylab = "Median Steps" , ylim=c(0, 300), 
+      main = "Median Steps By Day")
+
+par(def.par)
+
+### Step 2
+# Calculate Mean for 5 min interval
+
+workingData2 <- dataTable[ dataTable$steps != 0
+                           ,list( 
+                             AvgSteps = mean(steps,na.rm=TRUE) )
+                           ,by=interval
+                           ]
+
+plot( x = workingData2$interval,  type = "h", xlab = "5-Minute Interval", 
+      y = workingData2$AvgSteps,  ylab = "Mean Steps",
+      main = "Mean Steps by Interval")
+
+print("Maximum Average Number of steps by Interval:" )
+print(workingData2[workingData2$AvgSteps == max(workingData2$AvgSteps)])
+print(workingData2)
+
+### Step 3
+
+# Find missing values with NA
+
+dataTableNoNas <- data.table(dataTable)
+
+print(c("Missing Values count:", dim( dataTableNoNas[ is.na(dataTableNoNas$steps) ] )[1], "NAs" ))
+
+# Data imputate for NA. 
 
 
-library(plyr)
-# Calculate average steps for each of 5-minute interval during a 24-hour period
-intervalMeanSteps <- ddply(activityDataNoNA,~interval, summarise, mean=mean(steps))
-
-library(ggplot2)
-qplot(x=interval, y=mean, activityData = intervalMeanSteps,  geom = "line",
-      xLable="5min interval",
-      yLable="Step Count",
-      main="Average count of steps"
+dataTableNoNas$steps <- ifelse( is.na(dataTableNoNas$steps), 
+                                workingData2$AvgSteps[ dataTableNoNas$interval ], 
+                                dataTableNoNas$steps 
 )
 
-intervalMeanSteps[which.max(intervalMeanSteps$mean), ]
 
-library(sqldf)
 
-tableNAVal <- sqldf(' 
-                    SELECT d.*            
-                    FROM "activityData" as d
-                    WHERE d.steps IS NULL 
-                    ORDER BY d.date, d.interval ') 
+# Histogram for steps take per day with impact of imputing NA values. 
 
-NROW(tableNAVal) 
+workingData3 <- dataTableNoNas[ dataTableNoNas$steps != 0
+                                ,list(
+                                  sum    = sum(steps,na.rm=TRUE)
+                                  , mean   = mean(steps,na.rm=TRUE) 
+                                  , median = as.double( median(steps,na.rm=TRUE) )
+                                )
+                                ,by=day
+                                ]
 
-tableFinal <- sqldf('  
-                    SELECT d.*, i.mean
-                    FROM "intervalMeanSteps" as i
-                    JOIN "activityData" as d
-                    ON d.interval = i.interval 
-                    ORDER BY d.date, d.interval ') 
+def.par <- par(no.readonly = TRUE)
 
-tableFinal$steps[is.na(tableFinal$steps)] <- tableFinal$mean[is.na(tableFinal$steps)]
+layout( matrix( c(1, 1, 2, 3), 2, 2, byrow = TRUE) )
 
-tTotalSteps <- as.integer( sqldf(' 
-                                 SELECT sum(steps)  
-                                 FROM tableFinal') );
+plot( x = workingData3$day , type = "h", xlab = "Day", 
+      y = workingData3$sum , ylab = "Sum Steps", 
+      main = "Number of Steps by day (No NAs)")
 
-tTotalStepsByDate <- sqldf(' 
-                           SELECT date, sum(steps) as "tTotalStepsByDate" 
-                           FROM tableFinal GROUP BY date 
-                           ORDER BY date') 
+plot( x = workingData3$day, type = "h", xlab = "Day", 
+      y = workingData3$mean , ylab = "Mean Steps" , ylim=c(0, 300), 
+      main = "Mean Steps by day (No NAs)")
 
-dailySteps <- sqldf('   
-                    SELECT date, t1_total_steps_by_date as "steps"
-                    FROM "tTotalStepsByDate"
-                    ORDER BY date') 
+plot( x = workingData3$day, type = "h", xlab = "Day", 
+      y = workingData3$median , ylab = "Median Steps" , ylim=c(0, 300), 
+      main = "Median Steps by day (No NAs)")
 
-hist(dailySteps$steps, 
-     main=" ",
-     breaks=10,
-     xLable="After imputing NA steps taken")
+par(def.par)
 
-tMeanSteps <- as.integer(tTotalSteps / NROW(tTotalStepsByDate) )
-tMeanSteps
+## Mean values for the new data set
 
-tMedianSteps <- median(tTotalStepsByDate$tTotalStepsByDate)
-tMedianSteps
+workingData4 <- dataTableNoNas[ dataTableNoNas$steps != 0
+                                ,list( 
+                                  AvgSteps = mean(steps,na.rm=TRUE) )
+                                ,by=interval
+                                ]
 
-tableFinal$weektime <- as.factor(ifelse(weekdays(tableFinal$date) %in% 
-                                          c("Saturday","Sunday"),"weekend", "weekday"))
+plot( x = workingData4$interval,  type = "h", xlab = "5-minute Interval", 
+      y = workingData4$AvgSteps,  ylab = "Mean Steps", 
+      main = "Mean of Steps by Interval for new dataset")
 
-t5 <- sqldf('   
-            SELECT interval, avg(steps) as "meanSteps", weektime
-            FROM tableFinal
-            GROUP BY weektime, interval
-            ORDER BY interval ')
+print("Max Avg steps:" )
+print(workingData4[workingData4$AvgSteps == max(workingData4$AvgSteps)])
+print(workingData4)		
 
-library("lattice")
-p <- xyplot(meanSteps ~ interval | factor(weektime), activityData=t5, 
-            type = 'l',
-            main="Steps taken average on weekdays or weekends",
-            xLable="5minute interval",
-            yLable="Average steps")
-print (p)    
+weekDayVector <- weekdays(dataTableNoNas$day)
+saturdayVector <- weekDayVector=="Saturday"
+sundayVector <- weekDayVector=="Sunday"
+weekEndVector <- saturdayVector | sundayVector	
+dataTableNoNas <- cbind(dataTableNoNas, weekEndVector)
+
+weekEnddataTable <- dataTableNoNas[dataTableNoNas$weekEndVector == TRUE,]
+weekDaydataTable <- dataTableNoNas[dataTableNoNas$weekEndVector == FALSE,]
+
+workingData4 <- weekEnddataTable[ weekEnddataTable$steps != 0
+                                  ,list(
+                                    sum    = sum(steps,na.rm=TRUE)
+                                    , mean   = mean(steps,na.rm=TRUE) 
+                                    , median = as.double( median(steps,na.rm=TRUE) )
+                                  )
+                                  ,by=day
+                                  ]
+
+
+workingData5 <- weekDaydataTable[ weekDaydataTable$steps != 0
+                                  ,list(
+                                    sum    = sum(steps,na.rm=TRUE)
+                                    , mean   = mean(steps,na.rm=TRUE) 
+                                    , median = as.double( median(steps,na.rm=TRUE) )
+                                  )
+                                  ,by=day
+                                  ]			
+
+def.par <- par(no.readonly = TRUE)
+
+par(mfrow=c(2,1)) 
+
+plot( x = workingData4$day , type = "l", xlab = "Day", 
+      y = workingData4$sum , ylab = "Sum Steps", 
+      main = "Steps count on weekends without NA")
+
+plot( x = workingData5$day, type = "l", xlab = "Day", 
+      y = workingData5$mean , ylab = "Mean Steps" , ylim=c(0, 300), 
+      main = "Mean Steps on weekdays without NA")
+
+
+par(def.par)
